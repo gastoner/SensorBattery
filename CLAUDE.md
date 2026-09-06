@@ -32,7 +32,7 @@ Read these before making non-trivial changes:
 |-----|----------|
 | [docs/architecture.md](docs/architecture.md) | Class design, data flow, ANT+ vs BLE responsibilities |
 | [docs/specs.md](docs/specs.md) | Behavior, timings, retries, state machines, settings |
-| [docs/development.md](docs/development.md) | Build, CI, conventions, secrets |
+| [docs/development.md](docs/development.md) | Local build and conventions |
 
 ## Coding conventions
 
@@ -52,8 +52,6 @@ source/SensorBatteryBackground.mc  White background drawable
 source/BleBatteryManager.mc      BLE scan/pair/read state machine
 resources/settings/              User-configurable properties
 manifest.xml                     App ID, permissions, device targets
-.ci/                             Podman CI build scripts
-.github/workflows/               PR compile check
 ```
 
 ## Do not commit
@@ -62,8 +60,10 @@ manifest.xml                     App ID, permissions, device targets
 
 ## Build
 
+Local only — VS Code **Monkey C: Build for Device**, or:
+
 ```bash
 monkeyc -f monkey.jungle -d edge1050 -o bin/SensorBattery.prg -y developer_key -O3pz -w
 ```
 
-CI (Podman): see [README.md](README.md) and [docs/development.md](docs/development.md).
+See [docs/development.md](docs/development.md) for setup and conventions.

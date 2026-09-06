@@ -8,19 +8,25 @@ Power meter, Di2/shifting, Varia rear light, front light, heart rate, cadence, s
 
 ## Build & run
 
-Use the [Monkey C](https://developer.garmin.com/connect-iq/) extension in VS Code:
+Requires [Connect IQ SDK](https://developer.garmin.com/connect-iq/sdk/) 9.1.0 and a local `developer_key` (gitignored — never commit it).
+
+### VS Code (recommended)
+
+Use the [Monkey C](https://developer.garmin.com/connect-iq/) extension:
 
 1. Open this folder in VS Code
 2. **Monkey C: Build for Device** (or Run) — pick your device
 3. Sideload via Garmin Express or copy the `.prg` to `GARMIN/APPS/` on the device
 
-Keep `developer_key` local only — it is gitignored and must not be committed.
+### Command line
 
-## CI
-
-Pull requests run a compile check on GitHub Actions (`fenix847mm`, `edge1050`, `edge530`). No signing key is used in CI.
+```bash
+monkeyc -f monkey.jungle -d edge1050 -o bin/SensorBattery.prg -y developer_key -O3pz -w
+```
 
 ## Docs
 
 - [CLAUDE.md](CLAUDE.md) — project overview for contributors and AI tools
-- [docs/](docs/) — architecture, detailed specs, and advanced build notes
+- [docs/architecture.md](docs/architecture.md) — class design and data flow
+- [docs/specs.md](docs/specs.md) — behavior, timings, and state machines
+- [docs/development.md](docs/development.md) — conventions and local setup
