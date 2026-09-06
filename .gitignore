@@ -1,0 +1,9 @@
+/bin
+/dist
+/gen
+/mir
+/internal-mir
+SensorBattery.prg*
+SensorBattery.iq
+SensorBattery-settings.json
+developer_key
