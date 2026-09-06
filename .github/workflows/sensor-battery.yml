@@ -1,0 +1,55 @@
+name: SensorBattery CI
+
+on:
+  pull_request:
+    paths:
+      - 'source/**'
+      - 'resources/**'
+      - 'manifest.xml'
+      - 'monkey.jungle'
+      - '.ci/**'
+      - '.github/workflows/sensor-battery.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'source/**'
+      - 'resources/**'
+      - 'manifest.xml'
+      - 'monkey.jungle'
+      - '.ci/**'
+      - '.github/workflows/sensor-battery.yml'
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+    strategy:
+      fail-fast: false
+      matrix:
+        device:
+          - fenix847mm
+          - edge1050
+          - edge530
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Podman
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq podman
+
+      - name: Build CI image
+        run: |
+          podman build -t sensorbattery-ci \
+            --build-arg CIQ_SDK_VERSION=9.1.0 \
+            -f .ci/Containerfile \
+            .ci
+
+      - name: Compile
+        run: |
+          podman run --rm \
+            -v "${{ github.workspace }}:/app:Z" \
+            -w /app \
+            -e DEVICE=${{ matrix.device }} \
+            sensorbattery-ci /ci/build.sh

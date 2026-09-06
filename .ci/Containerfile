@@ -1,0 +1,34 @@
+FROM ubuntu:22.04
+
+ENV LANG=C.UTF-8
+ENV DEBIAN_FRONTEND=noninteractive
+
+ARG CIQ_SDK_VERSION=9.1.0
+
+RUN apt-get update -y \
+    && apt-get install --no-install-recommends -y -qq \
+        openjdk-17-jdk \
+        wget \
+        curl \
+        unzip \
+        openssl \
+        ca-certificates \
+        jq \
+    && apt-get clean \
+    && rm -rf /var/lib/apt/lists/* /tmp/* /var/tmp/*
+
+RUN SDK_FILE=$(curl -fsSL https://developer.garmin.com/downloads/connect-iq/sdks/sdks.json \
+        | jq -r --arg version "${CIQ_SDK_VERSION}" '.[] | select(.version==$version) | .linux') \
+    && curl -fsSL "https://developer.garmin.com/downloads/connect-iq/sdks/${SDK_FILE}" -o /tmp/connectiq-sdk.zip \
+    && mkdir -p /tmp/sdk-extract \
+    && unzip -q /tmp/connectiq-sdk.zip -d /tmp/sdk-extract \
+    && SDK_ROOT=$(find /tmp/sdk-extract -type f -name monkeyc | head -1 | xargs dirname | xargs dirname) \
+    && mv "${SDK_ROOT}" /opt/connectiq \
+    && rm -rf /tmp/sdk-extract /tmp/connectiq-sdk.zip
+
+ENV PATH="/opt/connectiq/bin:${PATH}"
+
+COPY build.sh build-release.sh /ci/
+RUN chmod +x /ci/build.sh /ci/build-release.sh
+
+WORKDIR /app
