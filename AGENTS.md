@@ -1,7 +1,7 @@
 # Agent instructions
 
 This repo uses [CLAUDE.md](CLAUDE.md) as the primary AI assistant entry point.
-
+.
 ## Documentation map
 
 | File | Contents |
