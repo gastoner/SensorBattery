@@ -1,6 +1,6 @@
 # Sensor Battery
 
-Garmin Connect IQ data field showing battery levels for connected ANT+ and BLE sensors.
+[Garmin Connect IQ data field](https://apps.garmin.com/apps/3080c63d-6b93-460b-bfcd-3522a5a2cd20) showing battery levels for connected ANT+ and BLE sensors.
 
 ## Supported sensors
 
