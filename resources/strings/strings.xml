@@ -1,0 +1,25 @@
+<strings>
+    <string id="AppName">Sensors Battery</string>
+    <string id="titleText">Title text</string>
+    <string id="showPmBattery">Show Power Meter</string>
+    <string id="showShiftingBattery">Show Shifter Battery</string>
+    <string id="showVaria">Show Rear Light</string>
+    <string id="showVariaMode">Show Rear Light Mode</string>
+    <string id="showFrontLight">Show Front Light</string>
+    <string id="showFrontLightMode">Show Front Light Mode</string>
+    <string id="showHrm">Show Heart Rate</string>
+    <string id="showCadence">Show Cadence Sensor</string>
+    <string id="showSpeed">Show Speed Sensor</string>
+    <string id="showDeviceBattery">Show Device Battery</string>
+    <string id="textZoom">Text Size</string>
+    <string id="rescanSensors">Rescan BLE Sensors</string>
+    <string id="debugMode">Debug Mode (raw sensor data)</string>
+    <string id="pmPosition">PM Position</string>
+    <string id="shifterPosition">Shifter Position</string>
+    <string id="rearPosition">Rear Light Position</string>
+    <string id="frontPosition">Front Light Position</string>
+    <string id="hrmPosition">HR Position</string>
+    <string id="devicePosition">Device Position</string>
+    <string id="cadencePosition">Cadence Position</string>
+    <string id="speedPosition">Speed Position</string>
+</strings>

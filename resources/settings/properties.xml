@@ -1,0 +1,24 @@
+<properties>
+    <property id="titleText" type="string">Battery</property>
+    <property id="showPmBattery" type="boolean">true</property>
+    <property id="showShiftingBattery" type="boolean">true</property>
+    <property id="showVaria" type="boolean">true</property>
+    <property id="showVariaMode" type="boolean">true</property>
+    <property id="showFrontLight" type="boolean">true</property>
+    <property id="showFrontLightMode" type="boolean">true</property>
+    <property id="showHrm" type="boolean">true</property>
+    <property id="showCadence" type="boolean">true</property>
+    <property id="showSpeed" type="boolean">true</property>
+    <property id="showDeviceBattery" type="boolean">true</property>
+    <property id="textZoom" type="number">0</property>
+    <property id="rescanSensors" type="boolean">false</property>
+    <property id="debugMode" type="boolean">false</property>
+    <property id="pmPosition" type="number">1</property>
+    <property id="shifterPosition" type="number">2</property>
+    <property id="rearPosition" type="number">3</property>
+    <property id="frontPosition" type="number">4</property>
+    <property id="hrmPosition" type="number">5</property>
+    <property id="cadencePosition" type="number">6</property>
+    <property id="speedPosition" type="number">7</property>
+    <property id="devicePosition" type="number">8</property>
+</properties>

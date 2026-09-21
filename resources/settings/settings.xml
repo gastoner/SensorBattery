@@ -1,0 +1,167 @@
+<settings>
+    <setting propertyKey="@Properties.titleText" title="@Strings.titleText">
+        <settingConfig type="alphaNumeric" required="true"/>
+    </setting>
+
+    <setting propertyKey="@Properties.showPmBattery" title="@Strings.showPmBattery">
+        <settingConfig type="boolean"/>
+    </setting>
+
+    <setting propertyKey="@Properties.showShiftingBattery" title="@Strings.showShiftingBattery">
+        <settingConfig type="boolean"/>
+    </setting>
+
+    <setting propertyKey="@Properties.showVaria" title="@Strings.showVaria">
+        <settingConfig type="boolean"/>
+    </setting>
+
+    <setting propertyKey="@Properties.showVariaMode" title="@Strings.showVariaMode">
+        <settingConfig type="boolean"/>
+    </setting>
+
+    <setting propertyKey="@Properties.showFrontLight" title="@Strings.showFrontLight">
+        <settingConfig type="boolean"/>
+    </setting>
+
+    <setting propertyKey="@Properties.showFrontLightMode" title="@Strings.showFrontLightMode">
+        <settingConfig type="boolean"/>
+    </setting>
+
+    <setting propertyKey="@Properties.showHrm" title="@Strings.showHrm">
+        <settingConfig type="boolean"/>
+    </setting>
+
+    <setting propertyKey="@Properties.showCadence" title="@Strings.showCadence">
+        <settingConfig type="boolean"/>
+    </setting>
+
+    <setting propertyKey="@Properties.showSpeed" title="@Strings.showSpeed">
+        <settingConfig type="boolean"/>
+    </setting>
+
+    <setting propertyKey="@Properties.showDeviceBattery" title="@Strings.showDeviceBattery">
+        <settingConfig type="boolean"/>
+    </setting>
+
+    <setting propertyKey="@Properties.textZoom" title="@Strings.textZoom">
+        <settingConfig type="list">
+            <listEntry value="-2">Larger (2x)</listEntry>
+            <listEntry value="-1">Larger</listEntry>
+            <listEntry value="0">Default</listEntry>
+            <listEntry value="1">Smaller</listEntry>
+            <listEntry value="2">Smaller (2x)</listEntry>
+        </settingConfig>
+    </setting>
+
+    <setting propertyKey="@Properties.rescanSensors" title="@Strings.rescanSensors">
+        <settingConfig type="boolean"/>
+    </setting>
+
+    <setting propertyKey="@Properties.debugMode" title="@Strings.debugMode">
+        <settingConfig type="boolean"/>
+    </setting>
+
+    <setting propertyKey="@Properties.pmPosition" title="@Strings.pmPosition">
+        <settingConfig type="list">
+            <listEntry value="1">1</listEntry>
+            <listEntry value="2">2</listEntry>
+            <listEntry value="3">3</listEntry>
+            <listEntry value="4">4</listEntry>
+            <listEntry value="5">5</listEntry>
+            <listEntry value="6">6</listEntry>
+            <listEntry value="7">7</listEntry>
+            <listEntry value="8">8</listEntry>
+        </settingConfig>
+    </setting>
+
+    <setting propertyKey="@Properties.shifterPosition" title="@Strings.shifterPosition">
+        <settingConfig type="list">
+            <listEntry value="1">1</listEntry>
+            <listEntry value="2">2</listEntry>
+            <listEntry value="3">3</listEntry>
+            <listEntry value="4">4</listEntry>
+            <listEntry value="5">5</listEntry>
+            <listEntry value="6">6</listEntry>
+            <listEntry value="7">7</listEntry>
+            <listEntry value="8">8</listEntry>
+        </settingConfig>
+    </setting>
+
+    <setting propertyKey="@Properties.rearPosition" title="@Strings.rearPosition">
+        <settingConfig type="list">
+            <listEntry value="1">1</listEntry>
+            <listEntry value="2">2</listEntry>
+            <listEntry value="3">3</listEntry>
+            <listEntry value="4">4</listEntry>
+            <listEntry value="5">5</listEntry>
+            <listEntry value="6">6</listEntry>
+            <listEntry value="7">7</listEntry>
+            <listEntry value="8">8</listEntry>
+        </settingConfig>
+    </setting>
+
+    <setting propertyKey="@Properties.frontPosition" title="@Strings.frontPosition">
+        <settingConfig type="list">
+            <listEntry value="1">1</listEntry>
+            <listEntry value="2">2</listEntry>
+            <listEntry value="3">3</listEntry>
+            <listEntry value="4">4</listEntry>
+            <listEntry value="5">5</listEntry>
+            <listEntry value="6">6</listEntry>
+            <listEntry value="7">7</listEntry>
+            <listEntry value="8">8</listEntry>
+        </settingConfig>
+    </setting>
+
+    <setting propertyKey="@Properties.hrmPosition" title="@Strings.hrmPosition">
+        <settingConfig type="list">
+            <listEntry value="1">1</listEntry>
+            <listEntry value="2">2</listEntry>
+            <listEntry value="3">3</listEntry>
+            <listEntry value="4">4</listEntry>
+            <listEntry value="5">5</listEntry>
+            <listEntry value="6">6</listEntry>
+            <listEntry value="7">7</listEntry>
+            <listEntry value="8">8</listEntry>
+        </settingConfig>
+    </setting>
+
+    <setting propertyKey="@Properties.cadencePosition" title="@Strings.cadencePosition">
+        <settingConfig type="list">
+            <listEntry value="1">1</listEntry>
+            <listEntry value="2">2</listEntry>
+            <listEntry value="3">3</listEntry>
+            <listEntry value="4">4</listEntry>
+            <listEntry value="5">5</listEntry>
+            <listEntry value="6">6</listEntry>
+            <listEntry value="7">7</listEntry>
+            <listEntry value="8">8</listEntry>
+        </settingConfig>
+    </setting>
+
+    <setting propertyKey="@Properties.speedPosition" title="@Strings.speedPosition">
+        <settingConfig type="list">
+            <listEntry value="1">1</listEntry>
+            <listEntry value="2">2</listEntry>
+            <listEntry value="3">3</listEntry>
+            <listEntry value="4">4</listEntry>
+            <listEntry value="5">5</listEntry>
+            <listEntry value="6">6</listEntry>
+            <listEntry value="7">7</listEntry>
+            <listEntry value="8">8</listEntry>
+        </settingConfig>
+    </setting>
+
+    <setting propertyKey="@Properties.devicePosition" title="@Strings.devicePosition">
+        <settingConfig type="list">
+            <listEntry value="1">1</listEntry>
+            <listEntry value="2">2</listEntry>
+            <listEntry value="3">3</listEntry>
+            <listEntry value="4">4</listEntry>
+            <listEntry value="5">5</listEntry>
+            <listEntry value="6">6</listEntry>
+            <listEntry value="7">7</listEntry>
+            <listEntry value="8">8</listEntry>
+        </settingConfig>
+    </setting>
+</settings>
