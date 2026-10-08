@@ -1,7 +1,6 @@
 import Toybox.Application.Storage;
 import Toybox.BluetoothLowEnergy;
 import Toybox.Lang;
-import Toybox.System;
 
 class BleInnerDelegate extends BluetoothLowEnergy.BleDelegate {
     private var mOuter as BleBatteryManager;
@@ -59,10 +58,10 @@ class BleBatteryManager {
     private const PHASE_IDLE = 6;
 
     private const DI2_TIMEOUT = 45;
-    private const HRM_TIMEOUT = 70;
+    private const HRM_TIMEOUT = 45;
     private const DI2_SERIAL_READ_MAX = 5;
     private const DI2_REJECTED_SCAN_MAX = 10;
-    private const PM_TIMEOUT = 70;
+    private const PM_TIMEOUT = 45;
     private const UNPAIR_WAIT = 3;
     private const PAIR_TIMEOUT = 30;
     private const MAX_RETRIES = 5;
@@ -72,9 +71,6 @@ class BleBatteryManager {
     private const SCAN_WINDOW = 10;
     private const SCAN_PAUSE = 20;
     private const MAX_SCAN_BACKOFF = 120;
-    private const HRM_DATA_GRACE = 5;
-    private const FAILED_SCAN_RETRY = 120;
-    private const FALLBACK_REFRESH_INTERVAL = 120;
 
     private enum {
         DS_IDLE,
@@ -107,7 +103,6 @@ class BleBatteryManager {
     private var mLastRefreshTick as Array<Number>;
     private var mFailedRetryTick as Array<Number>;
     private var mFallbackBattery as Array<Boolean>;
-    private var mSampleConnection as Array<Boolean>;
     private var mWant as Array<Boolean>;
     private var mDeviceName as Array<String>;
     private var mBatterySourceName as Array<String>;
@@ -131,8 +126,6 @@ class BleBatteryManager {
     private var mLastScanInfo as String = "";
     private var mDebugVerbose as Boolean = false;
     private var mDi2ScanName as String = "";
-    private var mHrLastDataTick as Number = -100;
-    private var mPmAntConnected as Boolean = false;
     private var mPairStartTick as Number = 0;
     private var mScanStartTick as Number = 0;
     private var mScanPauseUntilTick as Number = 0;
@@ -153,17 +146,13 @@ class BleBatteryManager {
     private var mDi2SerialReadAttempts as Number = 0;
     private var mDi2RejectedScans as Array<BluetoothLowEnergy.ScanResult>;
 
-    // Keep only primitive scan-window identity; the fresh pairing result is
-    // handed off separately to the next compute tick.
+    // Debug/ranking values are primitive; a native result is handed off only
+    // from a current scan callback to the next compute tick.
     private var mBestScanSeen as Boolean = false;
     private var mBestScanName as String = "";
     private var mBestScanSlot as Number = -1;
     private var mBestScanTier as Number = 0;
     private var mBestScanRssi as Number = -999;
-    private var mIdentityScanWindows as Number = 0;
-    private var mReacquireScanSlot as Number = -1;
-    private var mReacquireScanName as String = "";
-    private var mReacquireStartTick as Number = 0;
 
     // Per slot: Garmin can store ~3 HRMs / ~3 PMs / etc.
     // Names: one display entry per stored sensor. IDs: full + 16-bit per sensor, plus live ANT.
@@ -202,7 +191,6 @@ class BleBatteryManager {
         mLastRefreshTick = new Array<Number>[DEV_COUNT];
         mFailedRetryTick = new Array<Number>[DEV_COUNT];
         mFallbackBattery = new Array<Boolean>[DEV_COUNT];
-        mSampleConnection = new Array<Boolean>[DEV_COUNT];
         mDeviceName = new Array<String>[DEV_COUNT];
         mBatterySourceName = new Array<String>[DEV_COUNT];
         mStoredName = new Array<String>[DEV_COUNT];
@@ -238,7 +226,6 @@ class BleBatteryManager {
             mLastRefreshTick[i] = 0;
             mFailedRetryTick[i] = 0;
             mFallbackBattery[i] = false;
-            mSampleConnection[i] = false;
             mDeviceName[i] = "";
             mBatterySourceName[i] = "";
             mStoredName[i] = "";
@@ -270,6 +257,8 @@ class BleBatteryManager {
     }
 
     private function bootPhase() as Number {
+        if (mWant[DEV_HRM]) { return PHASE_HRM; }
+        if (mWant[DEV_PM]) { return PHASE_PM; }
         if (mWant[DEV_DI2]) { return PHASE_DI2; }
         return PHASE_IDLE;
     }
@@ -289,15 +278,7 @@ class BleBatteryManager {
     }
 
     private function slotCanSample(slot as Number) as Boolean {
-        return slotWanted(slot) && slotConnected(slot) && mRetryCount[slot] < MAX_RETRIES && mNeedsRefresh[slot];
-    }
-
-    private function slotConnected(slot as Number) as Boolean {
-        if (slot == DEV_PM) { return mPmAntConnected; }
-        if (slot == DEV_HRM) {
-            return mHrLastDataTick >= 0 && mTickCount - mHrLastDataTick <= HRM_DATA_GRACE;
-        }
-        return true;
+        return slotWanted(slot) && mRetryCount[slot] < MAX_RETRIES && mNeedsRefresh[slot];
     }
 
     private function sampleTimeout(slot as Number) as Number {
@@ -335,14 +316,7 @@ class BleBatteryManager {
 
     // Activity HR includes Garmin's connected ANT+ or BLE HRM on an Edge.
     function setHrDataLive(live as Boolean) as Void {
-        if (live) { mHrLastDataTick = mTickCount; }
-        if (!live) {
-            mLiveAntTarget[DEV_HRM] = 0;
-        }
-    }
-
-    function setPmAntConnected(connected as Boolean) as Void {
-        mPmAntConnected = connected;
+        if (!live) { mLiveAntTarget[DEV_HRM] = 0; }
     }
 
     // Prefer Garmin entry whose ANT ID matches the live activity sensor (e.g. worn HRM).
@@ -360,15 +334,15 @@ class BleBatteryManager {
         return hasShimanoManuf(result) || scanHasShimanoAdvUuid(result);
     }
 
-    // Pass 3: closest RSSI only when this scan window had no registered ANT IDs in BLE names.
+    // HRM/PM retain service-based signal fallback when no ANT ID matches.
     private function allowSignalFallback(slot as Number) as Boolean {
         if (slot < 0 || slot >= DEV_COUNT) { return false; }
         if (slot == DEV_DI2 && mLastScanHadRegisteredAntId[slot]) { return false; }
         if (slot == DEV_HRM) {
-            return slotConnected(DEV_HRM);
+            return slotWanted(DEV_HRM);
         }
         if (slot == DEV_PM) {
-            return slotConnected(DEV_PM);
+            return slotWanted(DEV_PM);
         }
         if (slot == DEV_DI2) {
             return allowDi2ShimanoProbe();
@@ -384,36 +358,6 @@ class BleBatteryManager {
         mBestScanRssi = -999;
     }
 
-    private function resetReacquireCandidate() as Void {
-        mReacquireScanSlot = -1;
-        mReacquireScanName = "";
-        mReacquireStartTick = 0;
-    }
-
-    private function considerScanCandidate(slot as Number, result as BluetoothLowEnergy.ScanResult, bleName as String) as Void {
-        var matchInfo = bestEntryMatchForBleName(slot, bleName);
-        var tier = matchInfo[0];
-        // When Garmin exposes the active ANT ID, another *registered* sensor
-        // is not an identity match for this battery sample.
-        if (mLiveAntTarget[slot] > 0) {
-            if (nameMatchesLiveAntTarget(slot, bleName)) {
-                if (tier < MATCH_ID) { tier = MATCH_ID; }
-            } else {
-                tier = MATCH_NONE;
-            }
-        }
-        var rssi = -999;
-        try { rssi = result.getRssi(); } catch (exRssi) {}
-        if (!mBestScanSeen || isBetterHrmPmScanMatch(slot, tier, rssi, bleName,
-                mBestScanTier, mBestScanRssi, mBestScanName)) {
-            mBestScanSeen = true;
-            mBestScanName = bleName;
-            mBestScanSlot = slot;
-            mBestScanTier = tier;
-            mBestScanRssi = rssi;
-        }
-    }
-
     private function nameMatchesLiveAntTarget(slot as Number, bleName as String) as Boolean {
         var target = mLiveAntTarget[slot];
         if (target <= 0 || bleName.equals("")) { return false; }
@@ -424,31 +368,15 @@ class BleBatteryManager {
 
     private function isBetterHrmPmScanMatch(slot as Number, newTier as Number, newRssi as Number,
             newName as String, curTier as Number, curRssi as Number, curName as String) as Boolean {
-        if (newTier > curTier) { return true; }
-        if (newTier < curTier) { return false; }
-        if (mLiveAntTarget[slot] > 0) {
+        if (newTier > MATCH_NONE && curTier > MATCH_NONE && mLiveAntTarget[slot] > 0) {
             var newLive = nameMatchesLiveAntTarget(slot, newName);
             var curLive = nameMatchesLiveAntTarget(slot, curName);
             if (newLive && !curLive) { return true; }
             if (!newLive && curLive) { return false; }
         }
+        if (newTier > curTier) { return true; }
+        if (newTier < curTier) { return false; }
         return newRssi > curRssi;
-    }
-
-    private function finishScanCandidate() as Void {
-        mIdentityScanWindows = 0;
-        if (!mBestScanSeen || mBestScanSlot < 0) {
-            resetScanCandidate();
-            return;
-        }
-        if (mBestScanTier == MATCH_NONE && !allowSignalFallback(mBestScanSlot)) {
-            resetScanCandidate();
-            return;
-        }
-        mReacquireScanSlot = mBestScanSlot;
-        mReacquireScanName = mBestScanName;
-        mReacquireStartTick = 0;
-        resetScanCandidate();
     }
 
     private function garminEntryIdMatchesBle(slot as Number, entryIdx as Number, bleName as String) as Boolean {
@@ -543,7 +471,7 @@ class BleBatteryManager {
             return [tier, entry] as Array<Number>;
         }
         for (var i = 0; i < mGarminNameCount[slot]; i++) {
-            if (garminEntryMatchesBleStrict(slot, i, bleName)) {
+            if (slot == DEV_DI2 && garminEntryMatchesBleStrict(slot, i, bleName)) {
                 if (tier < MATCH_STRICT) {
                     tier = MATCH_STRICT;
                     entry = i;
@@ -557,14 +485,15 @@ class BleBatteryManager {
             tier = MATCH_ID;
             entry = -1;
         }
-        if (tier < MATCH_ID && (slot == DEV_HRM || slot == DEV_PM) && nameMatchesAnyAntId(slot, bleName)) {
+        if (tier < MATCH_ID && (slot == DEV_HRM || slot == DEV_PM) &&
+                (nameMatchesAnyAntId(slot, bleName) || nameMatchesLiveAntTarget(slot, bleName))) {
             tier = MATCH_ID;
             entry = -1;
         }
         return [tier, entry] as Array<Number>;
     }
 
-    private function isSignalTypeCandidate(slot as Number, result as BluetoothLowEnergy.ScanResult) as Boolean {
+    protected function isSignalTypeCandidate(slot as Number, result as BluetoothLowEnergy.ScanResult) as Boolean {
         if (slot == DEV_DI2) {
             return allowDi2ShimanoProbe() && isShimanoScanResult(result);
         }
@@ -636,8 +565,6 @@ class BleBatteryManager {
         mPendingPairResult = null;
         mPendingPairName = "";
         resetScanCandidate();
-        resetReacquireCandidate();
-        mIdentityScanWindows = 0;
         mDi2ProbeScanResult = null;
         mDi2ProbeIdMatch = false;
         mDi2SerialReadAttempts = 0;
@@ -656,9 +583,8 @@ class BleBatteryManager {
         }
     }
 
-    private function computeTick() as Void {
+    protected function computeTick() as Void {
         mTickCount++;
-        syncCategoryConnections();
         processPendingPair();
 
         if (mPhase == PHASE_IDLE && mMgrState == MGR_ERROR) {
@@ -679,35 +605,11 @@ class BleBatteryManager {
             return;
         }
 
-        if (mMgrState == MGR_SCANNING) {
-            var scanStart = mReacquireScanSlot >= 0 && mReacquireStartTick > 0
-                ? mReacquireStartTick : mScanStartTick;
-            if (mTickCount - scanStart >= SCAN_WINDOW) {
-                var slot = activeSlot();
-                if ((slot == DEV_HRM || slot == DEV_PM) && mReacquireScanSlot < 0) {
-                    if (mIdentityScanWindows == 0 && mBestScanTier < MATCH_ID) {
-                        // Give a connected Garmin sensor a second window to advertise its ANT ID.
-                        mIdentityScanWindows = 1;
-                        stopScanning();
-                        mScanPauseUntilTick = mTickCount + SCAN_PAUSE;
-                        return;
-                    }
-                    finishScanCandidate();
-                    stopScanning();
-                    if (mReacquireScanSlot >= 0) {
-                        // A fresh scan callback is required before pairDevice().
-                        mScanPauseUntilTick = mTickCount;
-                        return;
-                    }
-                } else if ((slot == DEV_HRM || slot == DEV_PM) && mReacquireScanSlot >= 0) {
-                    // One extra window is enough to reacquire a live ScanResult.
-                    resetReacquireCandidate();
-                }
-                stopScanning();
-                mScanPauseUntilTick = mTickCount + mScanBackoff;
-                mScanBackoff = nextBackoff(mScanBackoff);
-                return;
-            }
+        if (mMgrState == MGR_SCANNING && mTickCount - mScanStartTick >= SCAN_WINDOW) {
+            stopScanning();
+            mScanPauseUntilTick = mTickCount + mScanBackoff;
+            mScanBackoff = nextBackoff(mScanBackoff);
+            return;
         }
 
         var elapsed = mTickCount - mPhaseStartTick;
@@ -749,31 +651,14 @@ class BleBatteryManager {
         return next;
     }
 
-    private function syncCategoryConnections() as Void {
-        for (var slot = DEV_HRM; slot <= DEV_PM; slot++) {
-            var connected = slotConnected(slot);
-            if (connected == mSampleConnection[slot]) { continue; }
-            mSampleConnection[slot] = connected;
-            mRetryCount[slot] = 0;
-            mNeedsRefresh[slot] = true;
-            mLastRefreshTick[slot] = 0;
-            mFailedRetryTick[slot] = 0;
-            mDevBatteryPct[slot] = -1;
-            mBatterySourceName[slot] = "";
-            mDeviceName[slot] = "";
-            mFallbackBattery[slot] = false;
-            if (!connected && activeSlot() == slot) {
-                stopScanning();
-                forceDisconnectSlot(slot);
-                mPhase = waitPhaseForSlot(slot);
-                mPhaseStartTick = mTickCount;
-            }
-        }
-    }
-
     private function handlePairTimeout(slot as Number, label as String) as Void {
         if (mDevState[slot] != DS_PAIRING) { return; }
         if (mTickCount - mPairStartTick < PAIR_TIMEOUT) { return; }
+
+        if (mDevices[slot] != null) {
+            try { BluetoothLowEnergy.unpairDevice(mDevices[slot]); } catch (ex) {}
+        }
+        mDevices[slot] = null;
         mPairingSlot = -1;
         mDevState[slot] = DS_DISCONNECTED;
         mIdentityTrusted[slot] = false;
@@ -863,7 +748,7 @@ class BleBatteryManager {
             if (!mBatteryRead[slot]) {
                 mRetryCount[slot]++;
                 if (slot == DEV_PM && mRetryCount[slot] >= MAX_RETRIES) {
-                    mFailedRetryTick[slot] = mTickCount + FAILED_SCAN_RETRY;
+                    mFailedRetryTick[slot] = mTickCount + refreshInterval(slot);
                 }
             }
             else { mLastRefreshTick[slot] = mTickCount; }
@@ -895,7 +780,7 @@ class BleBatteryManager {
             if (!mBatteryRead[DEV_HRM]) {
                 mRetryCount[DEV_HRM]++;
                 if (mRetryCount[DEV_HRM] >= MAX_RETRIES) {
-                    mFailedRetryTick[DEV_HRM] = mTickCount + FAILED_SCAN_RETRY;
+                    mFailedRetryTick[DEV_HRM] = mTickCount + HRM_REFRESH_INTERVAL;
                 }
             } else {
                 mRetryCount[DEV_HRM] = 0;
@@ -912,46 +797,37 @@ class BleBatteryManager {
     }
 
     private function needsRefresh(slot as Number) as Boolean {
-        if (!slotWanted(slot) || !slotConnected(slot)) { return false; }
+        if (!slotWanted(slot)) { return false; }
         if ((slot == DEV_HRM || slot == DEV_PM) && mRetryCount[slot] >= MAX_RETRIES) {
             return mFailedRetryTick[slot] > 0 && mTickCount >= mFailedRetryTick[slot];
         }
         if (mLastRefreshTick[slot] == 0) { return true; }
-        var interval = ((slot == DEV_HRM || slot == DEV_PM) && mFallbackBattery[slot])
-            ? FALLBACK_REFRESH_INTERVAL : refreshInterval(slot);
+        var interval = refreshInterval(slot);
         return (mTickCount - mLastRefreshTick[slot]) >= interval;
     }
 
     private function computeIdle() as Void {
-        if (needsRefresh(DEV_PM) || needsRefresh(DEV_DI2)) {
-            if (needsRefresh(DEV_PM)) {
-                mNeedsRefresh[DEV_PM] = true;
-                mRetryCount[DEV_PM] = 0;
-                mScanBackoff = SCAN_PAUSE;
-                beginSamplePhase(DEV_PM);
-            } else {
-                mNeedsRefresh[DEV_DI2] = true;
-                mRetryCount[DEV_DI2] = 0;
-                mScanBackoff = SCAN_PAUSE;
-                beginSamplePhase(DEV_DI2);
-            }
-            return;
-        }
-
-        if (needsRefresh(DEV_HRM)) {
-            mNeedsRefresh[DEV_HRM] = true;
-            mRetryCount[DEV_HRM] = 0;
-            mScanBackoff = SCAN_PAUSE;
-            beginSamplePhase(DEV_HRM);
-        }
+        var slot = -1;
+        if (needsRefresh(DEV_HRM)) { slot = DEV_HRM; }
+        else if (needsRefresh(DEV_PM)) { slot = DEV_PM; }
+        else if (needsRefresh(DEV_DI2)) { slot = DEV_DI2; }
+        if (slot < 0) { return; }
+        mNeedsRefresh[slot] = true;
+        mRetryCount[slot] = 0;
+        mScanBackoff = SCAN_PAUSE;
+        beginSamplePhase(slot);
     }
 
     private function sampleDone(slot as Number) as Boolean {
-        return !slotWanted(slot) || !slotConnected(slot) || mBatteryRead[slot] ||
+        return !slotWanted(slot) || mBatteryRead[slot] ||
             mRetryCount[slot] >= MAX_RETRIES || !mNeedsRefresh[slot];
     }
 
     private function enterIdleIfDone() as Void {
+        if (mWant[DEV_HRM] && !sampleDone(DEV_HRM)) {
+            beginSamplePhase(DEV_HRM);
+            return;
+        }
         if (mWant[DEV_PM] && !sampleDone(DEV_PM)) {
             beginSamplePhase(DEV_PM);
             return;
@@ -960,12 +836,6 @@ class BleBatteryManager {
             beginSamplePhase(DEV_DI2);
             return;
         }
-
-        if (mWant[DEV_HRM] && !sampleDone(DEV_HRM)) {
-            beginSamplePhase(DEV_HRM);
-            return;
-        }
-
         goIdle();
     }
 
@@ -983,6 +853,10 @@ class BleBatteryManager {
     }
 
     private function stopScanning() as Void {
+
+        mPendingPairSlot = -1;
+        mPendingPairResult = null;
+        mPendingPairName = "";
         if (mMgrState == MGR_SCANNING) {
             try { BluetoothLowEnergy.setScanState(BluetoothLowEnergy.SCAN_STATE_OFF); } catch (ex) {}
             mMgrState = MGR_RUNNING;
@@ -1018,8 +892,6 @@ class BleBatteryManager {
         }
         if (slot == DEV_HRM || slot == DEV_PM) {
             if (mBestScanSlot == slot) { resetScanCandidate(); }
-            if (mReacquireScanSlot == slot) { resetReacquireCandidate(); }
-            mIdentityScanWindows = 0;
         }
         try { BluetoothLowEnergy.setScanState(BluetoothLowEnergy.SCAN_STATE_OFF); } catch (ex) {}
     }
@@ -1150,16 +1022,15 @@ class BleBatteryManager {
     private function startScanning() as Void {
         if (!mProfileRegistered || mInner == null) { return; }
         var slot = activeSlot();
-        if (slot < 0 || !slotConnected(slot)) { return; }
+        if (slot < 0) { return; }
+
         try {
             BluetoothLowEnergy.setScanState(BluetoothLowEnergy.SCAN_STATE_SCANNING);
             mMgrState = MGR_SCANNING;
             mScanStartTick = mTickCount;
-            if (mReacquireScanSlot >= 0) {
-                mReacquireStartTick = mTickCount;
-            } else if (mIdentityScanWindows == 0) {
-                resetScanCandidate();
-            }
+            resetScanCandidate();
+            mPendingPairSlot = -1;
+            mPendingPairResult = null;
             mPendingPairName = "";
             mScanDeviceCount = 0;
             mErrorBackoff = 30;
@@ -1175,7 +1046,7 @@ class BleBatteryManager {
         return false;
     }
 
-    private function processPendingPair() as Void {
+    protected function processPendingPair() as Void {
         if (mPendingPairSlot < 0 || mPendingPairResult == null) { return; }
         if (mPairingSlot >= 0) { return; }
         var slot = mPendingPairSlot;
@@ -1185,20 +1056,22 @@ class BleBatteryManager {
         mPendingPairResult = null;
         mPendingPairName = "";
         if (!mWant[slot] || !needsDevice(slot)) { return; }
-        if (!slotConnected(slot)) { return; }
         if (mPhase != phaseForSlot(slot)) { return; }
         if (activeSlot() != slot) { return; }
         try {
-            if (slot == DEV_HRM || slot == DEV_PM) {
-                mDeviceName[slot] = name;
-            }
             if (slot == DEV_DI2) {
                 mCachedScanResult[slot] = result;
                 mDi2ProbeScanResult = result;
                 mDi2ProbeIdMatch = matchesScanIdentity(DEV_DI2, result);
                 mDi2SerialReadAttempts = 0;
             }
-            BluetoothLowEnergy.pairDevice(result);
+            var device = pairScanResult(result);
+            if (device == null) {
+                recoverFailedPair(slot, "pair:no device");
+                return;
+            }
+            if (slot == DEV_HRM || slot == DEV_PM) { mDeviceName[slot] = name; }
+            mDevices[slot] = device;
             mPairingSlot = slot;
             mDevState[slot] = DS_PAIRING;
             mPairStartTick = mTickCount;
@@ -1212,8 +1085,28 @@ class BleBatteryManager {
             if (slot == DEV_DI2) {
                 mCachedScanResult[slot] = null;
             }
-            mErrorMsg = "pair:" + ex.getErrorMessage();
+            recoverFailedPair(slot, "pair:" + ex.getErrorMessage());
         }
+    }
+
+    protected function pairScanResult(result as BluetoothLowEnergy.ScanResult) as BluetoothLowEnergy.Device? {
+        return BluetoothLowEnergy.pairDevice(result);
+    }
+
+    private function recoverFailedPair(slot as Number, message as String) as Void {
+
+        mPairingSlot = -1;
+        mDevices[slot] = null;
+        mDevState[slot] = DS_DISCONNECTED;
+        mIdentityTrusted[slot] = false;
+        if (slot == DEV_HRM || slot == DEV_PM) { resetScanCandidate(); }
+        if (slot == DEV_DI2) {
+            mCachedScanResult[slot] = null;
+            mDi2ProbeScanResult = null;
+            mDi2ProbeIdMatch = false;
+        }
+        mErrorMsg = message;
+        mScanPauseUntilTick = mTickCount;
     }
 
     private function needsDevice(slot as Number) as Boolean {
@@ -1270,11 +1163,14 @@ class BleBatteryManager {
     }
 
     function onScanChanged(scanState as BluetoothLowEnergy.ScanState, status as BluetoothLowEnergy.Status) as Void {
+
+        if (scanState != BluetoothLowEnergy.SCAN_STATE_SCANNING) {
+            mPendingPairSlot = -1;
+            mPendingPairResult = null;
+            mPendingPairName = "";
+        }
         if (scanState != BluetoothLowEnergy.SCAN_STATE_SCANNING && mMgrState == MGR_SCANNING) {
             mMgrState = MGR_RUNNING;
-        }
-        if (scanState == BluetoothLowEnergy.SCAN_STATE_SCANNING && mIdentityScanWindows == 0) {
-            resetScanCandidate();
         }
         if (scanState == BluetoothLowEnergy.SCAN_STATE_SCANNING) {
             mLastScanHadRegisteredAntId[DEV_DI2] = false;
@@ -1558,6 +1454,7 @@ class BleBatteryManager {
     }
 
     private function onScanResultInner(scanResults as BluetoothLowEnergy.Iterator) as Void {
+        if (mMgrState != MGR_SCANNING) { return; }
         var target = activeSlot();
         if (target == DEV_HRM || target == DEV_PM) {
             onHrmPmScanResults(target, scanResults);
@@ -1661,58 +1558,65 @@ class BleBatteryManager {
         }
     }
 
-    private function onHrmPmScanResults(target as Number, scanResults as BluetoothLowEnergy.Iterator) as Void {
-        var freshBest = null;
-        var freshBestName = "";
-        var freshBestRssi = -999;
+    protected function onHrmPmScanResults(target as Number, scanResults as BluetoothLowEnergy.Iterator) as Void {
+        if (mPairingSlot >= 0 || !needsDevice(target)) { return; }
+        var bestResult = null;
+        var bestName = "";
+        var bestTier = MATCH_NONE;
+        var bestRssi = -999;
         var sr = scanResults.next();
         while (sr != null) {
             var result = sr as BluetoothLowEnergy.ScanResult;
             mScanDeviceCount++;
             var bleName = scanBleNameFromResult(result);
+            var compatible = isSignalTypeCandidate(target, result);
+            var rejected = compatible && isRejectedDevice(result);
+            var rssi = -999;
+            try { rssi = result.getRssi(); } catch (exRssi) {  }
+            var tier = compatible && !rejected ? bestEntryMatchForBleName(target, bleName)[0] : MATCH_NONE;
 
             if (mDebugVerbose) {
-                var info = "#" + mScanDeviceCount;
-                if (!bleName.equals("")) { info = info + " " + bleName; }
-                mLastScanInfo = info;
+                mLastScanInfo = "#" + mScanDeviceCount + (bleName.equals("") ? "" : " " + bleName);
             }
-
-            if (isSignalTypeCandidate(target, result) && !isRejectedDevice(result)) {
-                if (mReacquireScanSlot == target) {
-                    if (mReacquireScanName.equals("") || bleName.equals(mReacquireScanName)) {
-                        var rssi = -999;
-                        try { rssi = result.getRssi(); } catch (exRssi) {}
-                        if (freshBest == null || rssi > freshBestRssi) {
-                            freshBest = result;
-                            freshBestName = bleName;
-                            freshBestRssi = rssi;
-                        }
-                    }
-                } else if (mReacquireScanSlot < 0) {
-                    considerScanCandidate(target, result, bleName);
+            if (compatible && !rejected) {
+                if (bestResult == null || isBetterHrmPmScanMatch(target, tier, rssi, bleName,
+                        bestTier, bestRssi, bestName)) {
+                    bestResult = result;
+                    bestName = bleName;
+                    bestTier = tier;
+                    bestRssi = rssi;
                 }
             }
             sr = scanResults.next();
         }
-        if (freshBest != null && mPairingSlot < 0 && mPendingPairSlot < 0) {
-            mPendingPairSlot = target;
-            mPendingPairResult = freshBest as BluetoothLowEnergy.ScanResult;
-            mPendingPairName = freshBestName.equals("") ? mReacquireScanName : freshBestName;
-            resetReacquireCandidate();
-            resetScanCandidate();
-        }
+        if (bestResult == null || (bestTier == MATCH_NONE && !allowSignalFallback(target))) { return; }
+
+        // As in the original search, rank only this callback's advertisements.
+        // Replace the handoff with its freshest compatible winner before compute().
+        mBestScanSeen = true;
+        mBestScanSlot = target;
+        mBestScanName = bestName;
+        mBestScanTier = bestTier;
+        mBestScanRssi = bestRssi;
+        mPendingPairSlot = target;
+        mPendingPairResult = bestResult as BluetoothLowEnergy.ScanResult;
+        mPendingPairName = bestName;
     }
 
     function onConnectionChanged(device as BluetoothLowEnergy.Device, state as BluetoothLowEnergy.ConnectionState) as Void {
         if (state == BluetoothLowEnergy.CONNECTION_STATE_CONNECTED) {
             var slot = mPairingSlot;
-            if (slot < 0) {
+            if (slot < 0 || (mDevices[slot] != null && mDevices[slot] != device)) {
                 try { BluetoothLowEnergy.unpairDevice(device); } catch (ex) {}
                 return;
             }
             mPairingSlot = -1;
             mDevices[slot] = device;
             mDevState[slot] = DS_SUBSCRIBING;
+            if (mErrorMsg.find("pair:") == 0 || mErrorMsg.equals("pair timeout") ||
+                    mErrorMsg.equals("pm pair timeout") || mErrorMsg.equals("di2 pair timeout")) {
+                mErrorMsg = "";
+            }
             try {
                 var devName = device.getName();
                 if (devName != null && !devName.equals("") && mDeviceName[slot].equals("")) {
@@ -1725,14 +1629,10 @@ class BleBatteryManager {
 
         var slot = findDeviceSlot(device);
         if (slot < 0) {
-            if (mPairingSlot >= 0) {
-                slot = mPairingSlot;
-                mPairingSlot = -1;
-            } else {
-                try { BluetoothLowEnergy.unpairDevice(device); } catch (ex) {}
-                return;
-            }
+            try { BluetoothLowEnergy.unpairDevice(device); } catch (ex) {}
+            return;
         }
+        if (mPairingSlot == slot) { mPairingSlot = -1; }
         try { BluetoothLowEnergy.unpairDevice(device); } catch (ex) {}
         mDevices[slot] = null;
         mBatteryChars[slot] = null;
@@ -1940,7 +1840,7 @@ class BleBatteryManager {
         }
     }
 
-    private function processDi2SerialRead(status as BluetoothLowEnergy.Status, value as Lang.ByteArray) as Void {
+    private function processDi2SerialRead(status as BluetoothLowEnergy.Status, value as Lang.ByteArray?) as Void {
         if (status == BluetoothLowEnergy.STATUS_SUCCESS && value != null && value.size() > 0) {
             completeDi2SerialRead(serialStringFromValue(value));
             return;
@@ -1967,14 +1867,15 @@ class BleBatteryManager {
         mSubscribingSlot = -1;
     }
 
-    function onCharRead(char as BluetoothLowEnergy.Characteristic, status as BluetoothLowEnergy.Status, value as Lang.ByteArray) as Void {
+    function onCharRead(char as BluetoothLowEnergy.Characteristic, status as BluetoothLowEnergy.Status, value as Lang.ByteArray?) as Void {
+
         try {
             if (mSerialCharUuid != null && char.getUuid().equals(mSerialCharUuid)) {
                 processDi2SerialRead(status, value);
                 return;
             }
         } catch (exSer) {}
-        if (status == BluetoothLowEnergy.STATUS_SUCCESS) {
+        if (status == BluetoothLowEnergy.STATUS_SUCCESS && value != null) {
             processValue(char, value);
         }
     }
@@ -2129,6 +2030,12 @@ class BleBatteryManager {
         return "";
     }
 
+    function getScanCandidateDebug(slot as Number) as String {
+        if (!mBestScanSeen || mBestScanSlot != slot) { return ""; }
+        return (mBestScanName.equals("") ? "(unnamed)" : mBestScanName) +
+            (mBestScanTier >= MATCH_ID ? " ID" : " RSSI");
+    }
+
     function getAntMatchDebug(slot as Number) as String {
         if (slot < 0 || slot >= DEV_COUNT) { return ""; }
         var s = "";
@@ -2218,16 +2125,11 @@ class BleBatteryManager {
             mLastRefreshTick[i] = 0;
             mFailedRetryTick[i] = 0;
             mFallbackBattery[i] = false;
-            mSampleConnection[i] = false;
             mLastScanHadRegisteredAntId[i] = false;
             mLiveAntTarget[i] = 0;
         }
-        mHrLastDataTick = -100;
-        mPmAntConnected = false;
-        mIdentityScanWindows = 0;
         mPendingPairName = "";
         resetScanCandidate();
-        resetReacquireCandidate();
         // Di2 name + MAC; purge any legacy PM/HRM name keys from older builds
         try { Storage.deleteValue("bleDi2Name"); } catch (ex) {}
         try { Storage.deleteValue("bleDi2Addr"); } catch (ex) {}

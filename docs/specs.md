@@ -32,13 +32,14 @@ Each activity frame:
 
 ```mermaid
 flowchart TD
-  compute[computeInner] --> ant[Poll ANT+ listeners]
+  compute[compute] --> ant[Poll ANT+ listeners]
   ant --> bleFeed[Identity feed to BLE mgr]
   bleFeed --> bleTick[BleBatteryManager.compute]
-  bleTick --> onUpdate[onUpdateInner: build rows and draw]
+  bleTick --> lights[Poll radar, lights and device battery]
+  lights --> onUpdate[onUpdateInner: build rows and draw]
 ```
 
-1. **`computeInner`** — read ANT+ battery data (PM, shifting, cadence, speed, lights, radar), run BLE manager, merge BLE battery into display state.
+1. **`compute`** — call `computeAntBatteries`, `computeBleBatteries`, then `computeLightAndDeviceBatteries` sequentially. Each stage returns before the next begins so ANT+ polling locals do not remain on the stack during the nested BLE identity feed. Sensor polling order, BLE timing and battery merging are unchanged.
 2. **`onUpdateInner`** — build sortable row buffers, pick fonts, draw title + rows.
 
 Row buffers (`mRowSortKeys`, `mRowTexts`, `mRowColors`) are reused every frame to avoid allocations.
@@ -172,17 +173,16 @@ Only one slot is actively pairing/connected during a sample cycle. Every slot di
 | PM | 7200 | ~2 h |
 | Di2 | 7200 | ~2 h |
 
-HRM/PM are eligible only while Garmin reports that category active. PM uses the
-BikePower listener's connection flag; HRM uses heart-rate activity data seen within
-the last 5 ticks (including ANT+ HRM data on an Edge). A successful RSSI-fallback
-read is rechecked after 120 ticks. After five failed samples, scanning restarts
-after 120 ticks if that Garmin category is still active.
+Enabled HRM/PM slots use service-compatible discovery without requiring live
+activity data or an ANT connection flag. Signal-fallback readings use the normal
+refresh interval. After five failed samples, a slot waits its normal refresh
+interval before starting another retry cycle.
 
 ---
 
 ## BLE phase state machine
 
-When multiple slots need a sample, the manager prioritizes PM, then Di2, then HRM:
+When multiple slots need a sample, the manager prioritizes HRM, then PM, then Di2:
 
 ```mermaid
 stateDiagram-v2
@@ -195,21 +195,24 @@ stateDiagram-v2
   DI2_WAIT: PHASE_DI2_WAIT
   IDLE: PHASE_IDLE
 
+  HRM --> HRM_WAIT
+  HRM_WAIT --> PM: PM needs sample
+  HRM_WAIT --> DI2: only Di2 needs sample
+  HRM_WAIT --> HRM: HRM retry needed
+  HRM_WAIT --> IDLE: done
   PM --> PM_WAIT
-  PM_WAIT --> DI2: DI2 needs sample
-  PM_WAIT --> HRM: only HRM needs sample
-  PM_WAIT --> IDLE: no other sample due
+  PM_WAIT --> DI2: Di2 needs sample
+  PM_WAIT --> HRM: HRM retry needed
+  PM_WAIT --> PM: PM retry needed
+  PM_WAIT --> IDLE: done
   DI2 --> DI2_WAIT
   DI2_WAIT --> HRM: HRM needs sample
+  DI2_WAIT --> PM: PM needs sample
+  DI2_WAIT --> DI2: Di2 retry needed
   DI2_WAIT --> IDLE: done
-  HRM --> HRM_WAIT
-  HRM_WAIT --> PM: PM became due
-  HRM_WAIT --> DI2: Di2 became due
-  HRM_WAIT --> HRM: retry needed
-  HRM_WAIT --> IDLE: done
-  IDLE --> PM: PM refresh due
-  IDLE --> DI2: DI2 refresh due
   IDLE --> HRM: HRM refresh due
+  IDLE --> PM: PM refresh due
+  IDLE --> DI2: Di2 refresh due
 ```
 
 ### Per-phase behavior
@@ -217,8 +220,7 @@ stateDiagram-v2
 **PHASE_HRM / PHASE_PM / PHASE_DI2**:
 - Pair/connect via scan or reclaim a compatible paired device
 - Discover the Battery service and issue one Battery Level characteristic read
-- Disconnect after a successful read or the slot timeout (70 ticks for HRM/PM,
-  45 for Di2)
+- Disconnect after a successful read or the slot timeout (45 ticks for each category)
 - On timeout without a read, increment `retryCount`
 - Cache successful battery values for display while disconnected
 
@@ -256,8 +258,8 @@ stateDiagram-v2
 
 | Constant | Value (ticks) | Purpose |
 |----------|---------------|---------|
-| `HRM_TIMEOUT` | 70 | Max time in HRM connect/read phase |
-| `PM_TIMEOUT` | 70 | Max time for PM sample |
+| `HRM_TIMEOUT` | 45 | Max time in HRM connect/read phase |
+| `PM_TIMEOUT` | 45 | Max time for PM sample |
 | `DI2_TIMEOUT` | 45 | Max time for Di2 sample |
 | `PAIR_TIMEOUT` | 30 | Abandon pairing attempt |
 | `UNPAIR_WAIT` | 3 | Pause between round-robin slots |
@@ -268,20 +270,16 @@ stateDiagram-v2
 | `HRM_REFRESH_INTERVAL` | 1200 | ~20 min between HRM battery reads |
 | `PM_REFRESH_INTERVAL` | 7200 | ~2 h between PM reads |
 | `DI2_REFRESH_INTERVAL` | 7200 | ~2 h between Di2 reads |
-| `HRM_DATA_GRACE` | 5 | Ticks since last HR data that count as active |
-| `FAILED_SCAN_RETRY` | 120 | Rescan after five failed HRM/PM samples |
-| `FALLBACK_REFRESH_INTERVAL` | 120 | Recheck a successful RSSI fallback |
 | `DI2_SERIAL_READ_MAX` | 5 | Max serial characteristic read attempts |
 | `DI2_REJECTED_SCAN_MAX` | 10 | Rejected Di2 scan results remembered |
 
 ### Scan backoff
 
-For HRM/PM, an unmatched first `SCAN_WINDOW` (10 ticks) is followed by a second
-window after `SCAN_PAUSE` (20 ticks). A candidate with the active ANT ID can finish
-after the first window. An unmatched second window uses the strongest compatible
-signal. Pairing waits for one fresh advertisement, so no native `ScanResult` is
-retained across windows. Later unsuccessful windows use exponential backoff up to
-`MAX_SCAN_BACKOFF` (120). Di2 retains its existing single-window scan behavior.
+All categories use the original 10-tick scan windows and exponential scan-pause
+backoff, starting at 20 ticks and capped at 120. HRM/PM select a compatible winner
+from each callback immediately; there is no additional two-window ID search or
+winner-reacquisition scan. Pairing runs at the next compute tick using that fresh
+result. A failed pairing resumes discovery and does not reuse the failed result.
 
 ### Error recovery
 
@@ -310,39 +308,31 @@ sequenceDiagram
 
 ### Scan candidate ranking
 
-For HRM and PM, candidates are ranked independently across scan callbacks and,
-when needed, two scan windows. The ranking order is:
+HRM and PM apply the same selection rules within each received scan batch:
 
-1. **Active ANT ID** — when Garmin provides it, only a BLE name containing that ID counts as an identity match; another registered sensor does not
-2. **Registered ANT ID** — used when the active ID is unavailable
-3. **RSSI** — if no identity match is found, use the strongest compatible signal in the category
+1. Filter advertisements by Heart Rate or Cycling Power service UUID.
+2. Compare each compatible BLE name against every ANT candidate ID in its category.
+3. Prefer a match to the active ANT ID, then any registered ANT ID; break ties by RSSI.
+4. If none matches, select the strongest compatible signal, including unnamed advertisements.
 
-Only the winner's name and ranking values are retained across scan windows; no
-`ScanResult` or native device comparison is kept from an earlier callback. Pairing
-waits for a fresh advertisement with that name, chooses the strongest matching
-result within that callback, then defers `pairDevice()` to `compute()` via
-`processPendingPair()` (never called from `onScanResults`). If no ANT-ID name match
-exists, select the strongest compatible candidate in that category. A nameless
-advertisement cannot be uniquely reacquired, so its fresh callback uses the
-strongest compatible result. Both HRM and PM require their Garmin category to be
-active before RSSI fallback.
+Garmin user-defined names remain display-only. A fresh compatible batch replaces
+the pending native result before `compute()` calls `pairDevice()`. Native results
+are discarded when scanning stops/restarts or the sample phase ends. Null pairing
+returns and exceptions such as `Candidate disappeared` return the slot to discovery.
+Only a non-null device enters pairing state; a disconnect releases that slot.
 
 ### Signal fallback rules
 
-Applied after the second scan window if no active/registered ANT-ID match appears.
-
-| Slot | Signal fallback allowed when |
-|------|---------------------------|
-| HRM | Recent activity heart-rate data (within 5 ticks) |
-| PM | BikePower listener reports connected |
-| Di2 | Shimano manufacturer or ADV UUID present |
+HRM/PM use the old service-compatible strongest-signal fallback immediately when
+no name contains a candidate ANT ID. Neither activity heart-rate data nor an ANT
+power connection flag is required. Di2 retains its Shimano filtering and serial
+verification.
 
 ### HRM live targeting
 
 When activity reports `currentHeartRate`, `setHrDataLive(true)` and
 `pushLiveHrmAntTarget()` feed the single enabled HRM's ANT serial into candidate
-IDs to disambiguate multiple straps. This is a proxy for HRM connection, not a
-direct Connect IQ HRM connection flag.
+IDs to disambiguate multiple straps. This prioritizes identity matches; it does not gate discovery or fallback.
 
 ### Successful-source naming
 
@@ -425,6 +415,8 @@ Defined in `resources/settings/settings.xml`, defaults in `resources/settings/pr
 ---
 
 ## Debug mode
+
+BLE rows include `A:` Garmin names and `P:` the pairing name.
 
 When enabled, rows show raw diagnostics instead of formatted labels:
 

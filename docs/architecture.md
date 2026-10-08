@@ -42,10 +42,14 @@ Lifecycle is managed in `syncSensorLifecycle()` — listeners are created/destro
 
 ### Display pipeline
 
-1. `compute()` / `computeInner()` — poll ANT+ data, advance BLE manager, feed ANT IDs to BLE for matching
+1. `compute()` — run ANT+ battery polling, BLE identity feed and sampling, then light/device battery polling in separate stages
 2. `onUpdate()` / `onUpdateInner()` — build row buffers (`mRowSortKeys`, `mRowTexts`, `mRowColors`), sort by position, draw with adaptive font ladder
 
 Row buffers are reused each frame to avoid allocations on constrained devices.
+
+The compute stages return before the next stage runs. This releases ANT+ polling
+locals before the nested registry-to-BLE identity feed, avoiding stack exhaustion
+on the Edge 530.
 
 ### Identity feed (ANT → BLE)
 
@@ -68,7 +72,7 @@ Manages BLE battery reads for three device types in a round-robin:
 
 ### Phase state machine
 
-When several slots need sampling, phases run in priority order: PM → PM_WAIT → Di2 → DI2_WAIT → HRM → HRM_WAIT → IDLE.
+When several slots need sampling, phases run in priority order: HRM → HRM_WAIT → PM → PM_WAIT → Di2 → DI2_WAIT → IDLE.
 
 Each phase: scan → pair (deferred to `compute()`, not scan callback — CIQQA-4261) → discover Battery Service → read characteristic → disconnect → next phase. Battery values remain cached for display, but no BLE device intentionally remains connected while the manager is idle.
 
@@ -85,23 +89,28 @@ BLE scan results are matched against ANT candidate IDs and Garmin-stored sensor 
 - `MATCH_STRICT` — ID + name match
 - Optional BLE address from `SensorInfo`
 
-HRM and PM sample only while Garmin reports that category active (PM via the ANT+
-BikePower listener; HRM via recent activity heart-rate data). Candidates are ranked
-independently across scan callbacks. The active ANT ID wins when available; if no
-matching advertisement appears in the first 10-tick window, a second window starts
-after 20 ticks. With no ID match, the strongest compatible advertisement in that
-category is selected. A fallback battery is rechecked after 120 ticks so a sensor
-that advertises its ID later can replace it. Exhausted searches also restart after
-120 ticks while the Garmin sensor remains active.
+HRM and PM use the original service-based discovery cadence: 45-tick sample
+phases, 10-tick scan windows, and scan pauses starting at 20 ticks and capped at
+120. Each callback filters advertisements by category, compares every compatible
+BLE name against that category's ANT candidate IDs, and selects the active-ID
+match first, another registered-ID match second, or otherwise the strongest
+compatible signal. Garmin display names do not affect HRM/PM identity matching.
+Discovery does not require activity heart-rate data or a connected ANT power
+listener. Refresh intervals remain 1200 ticks for HRM and 7200 for PM/Di2,
+including readings obtained through signal fallback.
 
-Only the scan-window winner's name and ranking values are retained. Pairing waits
-for a fresh advertisement with that name (or a strongest compatible result if
-unnamed) and is deferred to `compute()` via `processPendingPair()`, never started
-from a scan callback. On a successful read, the
-battery percentage and source name are cached together: use the Garmin name associated
-with a matched ANT ID, or otherwise the selected BLE-advertised name. Failed scans,
-pairs, and reads do not relabel an already cached battery. Di2 discovery, Shimano
-filtering, serial verification, and naming remain unchanged.
+A callback hands its fresh winner to the next `compute()` tick. It does not wait
+through identity-ranking windows or retain native results across scan restarts.
+`pairDevice()` stays in `compute()` rather than a scan callback. Null returns and
+pairing exceptions discard the failed result and return the slot to discovery;
+connection failures release the pairing slot. A successful connection clears a
+previous transient pairing error. Debug rows show Garmin sensor names under `A:`
+and the pairing target under `P:`.
+
+Battery percentage and source name are cached together only after a successful
+read. An ID match resolves to its Garmin display name; a signal fallback uses the
+BLE-advertised name. Failed attempts do not rename a cached reading. Di2's
+Shimano filtering, serial verification, persisted serial and naming remain unchanged.
 
 ## Settings integration
 
