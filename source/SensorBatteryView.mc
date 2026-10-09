@@ -196,8 +196,8 @@ class SensorBatteryView extends WatchUi.DataField {
         showCadence = getBoolProp("showCadence", true);
         showSpeed = getBoolProp("showSpeed", true);
         showDeviceBattery = getBoolProp("showDeviceBattery", true);
-        debugMode = getBoolProp("debugMode", false);
-        textZoom = getNumberProp("textZoom", 0);
+        debugMode = true;
+        textZoom = getNumberProp("textZoom", -2);
         if (textZoom < -2) { textZoom = -2; }
         if (textZoom > 2) { textZoom = 2; }
         pmPosition = getNumberProp("pmPosition", 1);
@@ -209,7 +209,7 @@ class SensorBatteryView extends WatchUi.DataField {
         speedPosition = getNumberProp("speedPosition", 7);
         devicePosition = getNumberProp("devicePosition", 8);
 
-        var rescan = getBoolProp("rescanSensors", false);
+        var rescan = true;
         if (rescan) {
             try { Storage.deleteValue("bleDi2Name"); } catch (ex) {}
             try { Storage.deleteValue("bleDi2Addr"); } catch (ex) {}
@@ -362,12 +362,16 @@ class SensorBatteryView extends WatchUi.DataField {
 
     function compute(info as Activity.Info) as Void {
         try {
-            computeInner(info);
+            // Release each polling stage's locals before the nested identity feed.
+            // Keeping all sensor locals on the stack overflows on Edge 530.
+            computeAntBatteries();
+            computeBleBatteries();
+            computeLightAndDeviceBatteries();
         } catch (ex) {
         }
     }
 
-    private function computeInner(info as Activity.Info) as Void {
+    private function computeAntBatteries() as Void {
         if (mBikePower != null) {
             try {
                 var bp = mBikePower as AntPlus.BikePower;
@@ -473,6 +477,9 @@ class SensorBatteryView extends WatchUi.DataField {
             }
         }
 
+    }
+
+    private function computeBleBatteries() as Void {
         if (mBleMgr != null) {
             var hrLive = false;
             if (Toybox.Activity has :getActivityInfo) {
@@ -484,7 +491,6 @@ class SensorBatteryView extends WatchUi.DataField {
                 } catch (exHr) {}
             }
             mBleMgr.setHrDataLive(hrLive);
-            mBleMgr.setPmAntConnected(mBikePowerListener != null && mBikePowerListener.isConnected());
             pushLiveHrmAntTarget(hrLive);
             maybeFeedAntIdsToBleMgr();
             if (mShiftPartsFromAnt) {
@@ -519,7 +525,9 @@ class SensorBatteryView extends WatchUi.DataField {
             var pmBlePct = mBleMgr.getPmBatteryPercent();
             mPmBleBatteryPercent = pmBlePct;
         }
+    }
 
+    private function computeLightAndDeviceBatteries() as Void {
         if (mBikeRadar != null && mBikeRadarListener != null && mBikeRadarListener.isConnected()) {
             try {
                 var radar = mBikeRadar as AntPlus.BikeRadar;
@@ -1085,10 +1093,14 @@ class SensorBatteryView extends WatchUi.DataField {
         feedAllRegisteredSensors(2, Sensor.SENSOR_BIKEPOWER);
     }
 
+    protected function registeredSensors(sensorType as Sensor.SensorType) as Sensor.SensorInfoIterator {
+        return Sensor.getRegisteredSensors(sensorType);
+    }
+
     hidden function feedAllRegisteredSensors(slot as Number, sensorType as Sensor.SensorType) as Void {
         if (mBleMgr == null) { return; }
         try {
-            var it = Sensor.getRegisteredSensors(sensorType);
+            var it = registeredSensors(sensorType);
             var info = it.next();
             while (info != null) {
                 var si = info as Sensor.SensorInfo;
@@ -1190,8 +1202,7 @@ class SensorBatteryView extends WatchUi.DataField {
         return false;
     }
 
-    // A: Garmin registered names (stand in for candidate identity) | P: BLE pairing name
-    // No C: — A: already lists the sensors whose ANT IDs we feed for match.
+    // A: Garmin names | P: pairing name
     hidden function formatBleDebugSuffix(slot as Number, bleName as String) as String {
         if (mBleMgr == null) { return ""; }
         var s = "";
@@ -1295,10 +1306,6 @@ class SensorBatteryView extends WatchUi.DataField {
             var di2Pct = mBleMgr.getDi2BatteryPercent();
             var di2Row = "Di2:" + mBleMgr.getDevStateString(0) + (di2Pct >= 0 ? " " + di2Pct + "%" : " --");
             di2Row = di2Row + formatBleDebugSuffix(0, mBleMgr.getDi2PairDebugLabel());
-            var di2Ids = mBleMgr.getAntMatchDebug(0);
-            if (!di2Ids.equals("")) {
-                di2Row = di2Row + " " + di2Ids;
-            }
             rows.add(di2Row);
             var pmPct = mBleMgr.getPmBatteryPercent();
             var pmRow = "PM:" + mBleMgr.getDevStateString(2) + (pmPct >= 0 ? " " + pmPct + "%" : " --");

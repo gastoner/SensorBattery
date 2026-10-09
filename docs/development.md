@@ -49,3 +49,20 @@ developer_key
 | `resources/settings/` | User-configurable properties |
 | `manifest.xml` | App metadata and device targets |
 | `monkey.jungle` | Build entry point |
+
+## Tests
+
+The Jungle source paths include `tests/`. Test fixtures and entry points use
+`(:test)` and are excluded from normal builds.
+
+```bash
+monkeyc -f monkey.jungle -d edge530 -o bin/SensorBattery-test.prg -y developer_key -O3pz -w -t
+connectiq
+monkeydo bin/SensorBattery-test.prg edge530 -t
+```
+
+Repeat normal and test builds and simulator tests for `edge1050`. Check the final
+`PASSED`/`FAILED` summary: the local SDK's `monkeydo` can return exit code 1 even
+when every test passes. Fixtures cover BLE matching, deferred pairing, failure
+recovery, sample timing, and the view's ANT identity feed. Real Garmin hardware
+is still needed to validate BLE timing and memory usage with actual sensors.
